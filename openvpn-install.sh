@@ -12,10 +12,10 @@ usage() {
 Usage: ./$(basename "$0") [options]
 
 Options:
--c, --config-file PATH      Config file path
--s, --script				Non-interactive mode
+-c, --config PATH	    Config file path
+-s, --script				  Non-interactive mode
 -u, --uninstall				Remove OpenVPN
--h, --help              	Show this help and exit
+-h, --help            Show this help and exit
 
 Example:
 ./$(basename "$0") --config-file ./config.cfg
@@ -132,7 +132,12 @@ fi
 script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 if [[ -n "$CONFIG_FILE" ]]; then
-	source $CONFIG_FILE
+  if [[ -f "$CONFIG_FILE" ]]; then
+	  source $CONFIG_FILE
+  else
+    echo "Config file $CONFIG_FILE not found."
+    exit 1
+  fi
 fi
 
 if [[ ! -e /etc/openvpn/server/server.conf ]]; then
@@ -246,12 +251,12 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	fi
 	[[ -z "$port" ]] && port="1194"
 
-	if [[ $interactive -eq 1 && -z "$dns"]]; then
+	if [[ $interactive -eq 1 && -z "$dns" ]]; then
 		echo
 		echo "Select a DNS server for the clients:"
 		echo "   1) Default system resolvers"
-		echo "   2) Google"
-		echo "   3) 1.1.1.1"
+		echo "   2) Google (8.8.8.8)"
+		echo "   3) Cloduflare (1.1.1.1)"
 		echo "   4) OpenDNS"
 		echo "   5) Quad9"
 		echo "   6) Gcore"
