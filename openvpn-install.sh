@@ -9,11 +9,24 @@ interactive=1
 # Usage / help
 usage() {
   cat <<EOF
-Usage: ./$(basename "$0") [options]
+Usage: ./$(basename "$0") [options] [arguments]
+
+Arguments:
+
+Directly passed arguments take precendence over config file arguments.
+
+--ip4                 (Local) IPv4
+--public-ip4          Public IPv4, only provide if server is behind NAT
+--ip6                 Public IPv6
+--protocol            Protocol (default: udp)
+--port                Port number (default: 1194)
+--dns                 DNS setting (default: system defaults)
+--custom-dns          Custom DNS servers as comma-delimited list
+--client              Client name (default: client)
 
 Options:
 -c, --config PATH	    Config file path
--s, --script				  Non-interactive mode
+-s, --script				  Force non-interactive mode
 -u, --uninstall				Remove OpenVPN
 -h, --help            Show this help and exit
 
@@ -22,9 +35,41 @@ Example:
 EOF
 }
 
-# Argument parsing
+# Arguments parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --ip4)
+      ip_override=$2
+      shift 2
+      ;;
+    --public-ip4)
+      public_ip_override=$2
+      shift 2
+      ;;
+    --ip6)
+      ip6_override=$2
+      shift 2
+      ;;
+    --protocol)
+      protocol_override=$2
+      shift 2
+      ;;
+    --port)
+      port_override=$2
+      shift 2
+      ;;
+    --dns)
+      dns_override=$2
+      shift 2
+      ;;
+    --custom-dns)
+      custom_dns_override=$2
+      shift 2
+      ;;
+    --client)
+      client_override=$2
+      shift 2
+      ;;
     -c|--config-file)
       CONFIG_FILE="${2:?'Error: --config-file flag was provided but unset'}"
       shift 2
@@ -51,6 +96,25 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$CONFIG_FILE" ]]; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+	  source $CONFIG_FILE
+  else
+    echo "Config file $CONFIG_FILE not found."
+    exit 1
+  fi
+fi
+
+# Explcitily override config file if overrides exist
+[[ -n "$ip_override" ]] && $ip=$ip_override
+[[ -n "$public_ip_override" ]] && $public_ip=$public_ip_override
+[[ -n "$ip6_override" ]] && $ip6=$ip6_override
+[[ -n "$protocol_override" ]] && $protocol=$protocol_override
+[[ -n "$port_override" ]] && $port=$port_override
+[[ -n "$dns_override" ]] && $dns=$dns_override
+[[ -n "$custom_dns_override" ]] && $custom_dns=$custom_dns_override
+[[ -n "$client_override" ]] && $client=$client_override
 
 
 # Detect Debian users running the script with "sh" instead of bash
@@ -131,15 +195,6 @@ fi
 # Store the absolute path of the directory where the script is located
 script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-if [[ -n "$CONFIG_FILE" ]]; then
-  if [[ -f "$CONFIG_FILE" ]]; then
-	  source $CONFIG_FILE
-  else
-    echo "Config file $CONFIG_FILE not found."
-    exit 1
-  fi
-fi
-
 if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	# Detect some Debian minimal setups where neither wget nor curl are installed
 	if ! hash wget 2>/dev/null && ! hash curl 2>/dev/null; then
@@ -171,6 +226,7 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 			[[ -z "$ip_number" ]] && ip_number="1"
 			ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sed -n "$ip_number"p)
 		fi
+    : "${ip:?'ip was not provided and could not be inferred'}"
 	fi
 
 
@@ -191,6 +247,7 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 				done
 			fi
 			[[ -z "$public_ip" ]] && public_ip="$get_public_ip"
+      : "${public_ip:?'public_ip was not provided and could not be inferred'}"
 		fi
 	fi
 
@@ -251,12 +308,16 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	fi
 	[[ -z "$port" ]] && port="1194"
 
+  if [[ -n $custom_dns ]]; then
+    dns=8
+  fi
+
 	if [[ $interactive -eq 1 && -z "$dns" ]]; then
 		echo
 		echo "Select a DNS server for the clients:"
 		echo "   1) Default system resolvers"
-		echo "   2) Google (8.8.8.8)"
-		echo "   3) Cloduflare (1.1.1.1)"
+		echo "   2) Google"
+		echo "   3) Cloudflare"
 		echo "   4) OpenDNS"
 		echo "   5) Quad9"
 		echo "   6) Gcore"
@@ -310,6 +371,18 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	# Allow a limited set of characters to avoid conflicts
 	client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
 	[[ -z "$client" ]] && client="client"
+
+  # Log configuration parameters
+  echo "IPv4: $ip
+  Public IP: ${public_ip:-$ip}
+  IPv6: $ip6
+  Protocol: $protocol
+  Port: $port
+  DNS: $dns
+  Custom DNS servers: $custom_dns
+  Client name: $client
+  "
+
 	echo
 	echo "OpenVPN installation is ready to begin."
 	# Install a firewall if firewalld or iptables are not already available
