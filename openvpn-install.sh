@@ -4,6 +4,118 @@
 #
 # Copyright (c) 2013 Nyr. Released under the MIT License.
 
+interactive=1
+
+# Usage / help
+usage() {
+  cat <<EOF
+Usage: ./$(basename "$0") [options] [arguments]
+
+Arguments:
+
+Directly passed arguments take precendence over config file arguments.
+
+--ip4                 (Local) IPv4
+--public-ip4          Public IPv4, only provide if server is behind NAT
+--ip6                 Public IPv6
+--protocol            Protocol (default: udp)
+--port                Port number (default: 1194)
+--dns                 DNS setting (default: system defaults)
+--custom-dns          Custom DNS servers as comma-delimited list
+--client              Client name (default: client)
+
+Options:
+-c, --config PATH	    Config file path
+-s, --script				  Force non-interactive mode
+-u, --uninstall				Remove OpenVPN
+-h, --help            Show this help and exit
+
+Example:
+./$(basename "$0") --config-file ./config.cfg
+EOF
+}
+
+# Arguments parsing
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ip4)
+      ip_override=$2
+      shift 2
+      ;;
+    --public-ip4)
+      public_ip_override=$2
+      shift 2
+      ;;
+    --ip6)
+      ip6_override=$2
+      shift 2
+      ;;
+    --protocol)
+      protocol_override=$2
+      shift 2
+      ;;
+    --port)
+      port_override=$2
+      shift 2
+      ;;
+    --dns)
+      dns_override=$2
+      shift 2
+      ;;
+    --custom-dns)
+      custom_dns_override=$2
+      shift 2
+      ;;
+    --client)
+      client_override=$2
+      shift 2
+      ;;
+    -c|--config-file)
+      CONFIG_FILE="${2:?'Error: --config-file flag was provided but unset'}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+	-s|--script)
+      interactive=0
+      shift 1
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Error: Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ -n "$CONFIG_FILE" ]]; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+	  source $CONFIG_FILE
+  else
+    echo "Config file $CONFIG_FILE not found."
+    exit 1
+  fi
+fi
+
+# Explcitily override config file if overrides exist
+[[ -n "$ip_override" ]] && $ip=$ip_override
+[[ -n "$public_ip_override" ]] && $public_ip=$public_ip_override
+[[ -n "$ip6_override" ]] && $ip6=$ip6_override
+[[ -n "$protocol_override" ]] && $protocol=$protocol_override
+[[ -n "$port_override" ]] && $port=$port_override
+[[ -n "$dns_override" ]] && $dns=$dns_override
+[[ -n "$custom_dns_override" ]] && $custom_dns=$custom_dns_override
+[[ -n "$client_override" ]] && $client=$client_override
+
 
 # Detect Debian users running the script with "sh" instead of bash
 if readlink /proc/$$/exe | grep -q "dash"; then
@@ -87,103 +199,146 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	# Detect some Debian minimal setups where neither wget nor curl are installed
 	if ! hash wget 2>/dev/null && ! hash curl 2>/dev/null; then
 		echo "Wget is required to use this installer."
-		read -n1 -r -p "Press any key to install Wget and continue..."
+		if [[ $interactive -eq 1 ]]; then
+			read -n1 -r -p "Press any key to install Wget and continue..."
+		fi
 		apt-get update
 		apt-get install -y wget
 	fi
 	clear
 	echo 'Welcome to this OpenVPN road warrior installer!'
 	# If system has a single IPv4, it is selected automatically. Else, ask the user
-	if [[ $(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}') -eq 1 ]]; then
-		ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
-	else
-		number_of_ip=$(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}')
-		echo
-		echo "Which IPv4 address should be used?"
-		ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | nl -s ') '
-		read -p "IPv4 address [1]: " ip_number
-		until [[ -z "$ip_number" || "$ip_number" =~ ^[0-9]+$ && "$ip_number" -le "$number_of_ip" ]]; do
-			echo "$ip_number: invalid selection."
-			read -p "IPv4 address [1]: " ip_number
-		done
-		[[ -z "$ip_number" ]] && ip_number="1"
-		ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sed -n "$ip_number"p)
+	if [[ -z "$ip" ]]; then
+		if [[ $(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}') -eq 1 ]]; then
+			ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
+		else
+			if [[ $interactive -eq 1 ]]; then
+				number_of_ip=$(ip -4 addr | grep inet | grep -vEc '127(\.[0-9]{1,3}){3}')
+				echo
+				echo "Which IPv4 address should be used?"
+				ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | nl -s ') '
+				read -p "IPv4 address [1]: " ip_number
+				until [[ -z "$ip_number" || "$ip_number" =~ ^[0-9]+$ && "$ip_number" -le "$number_of_ip" ]]; do
+					echo "$ip_number: invalid selection."
+					read -p "IPv4 address [1]: " ip_number
+				done
+			fi
+			[[ -z "$ip_number" ]] && ip_number="1"
+			ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sed -n "$ip_number"p)
+		fi
+    : "${ip:?'ip was not provided and could not be inferred'}"
 	fi
+
+
 	# If $ip is a private IP address, the server must be behind NAT
-	if echo "$ip" | grep -qE '^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168)'; then
+	if [[ -z "$public_ip" ]]; then
+		if echo "$ip" | grep -qE '^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168)'; then
+			# Get public IP and sanitize with grep
+			get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
+			
+			if [[ $interactive -eq 1 ]]; then
+				echo
+				echo "This server is behind NAT. What is the public IPv4 address or hostname?"
+				read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
+				# If the checkip service is unavailable and user didn't provide input, ask again
+				until [[ -n "$get_public_ip" || -n "$public_ip" ]]; do
+					echo "Invalid input."
+					read -p "Public IPv4 address / hostname: " public_ip
+				done
+			fi
+			[[ -z "$public_ip" ]] && public_ip="$get_public_ip"
+      : "${public_ip:?'public_ip was not provided and could not be inferred'}"
+		fi
+	fi
+
+	if [[ -z "$ip6" ]]; then
+		# If system has a single IPv6, it is selected automatically
+		if [[ $(ip -6 addr | grep -c 'inet6 [23]') -eq 1 ]]; then
+			ip6=$(ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}')
+		fi
+		# If system has multiple IPv6, ask the user to select one
+		if [[ $(ip -6 addr | grep -c 'inet6 [23]') -gt 1 ]]; then
+
+			if [[ $interactive -eq 1 ]]; then
+				number_of_ip6=$(ip -6 addr | grep -c 'inet6 [23]')
+				echo
+				echo "Which IPv6 address should be used?"
+				ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}' | nl -s ') '
+				read -p "IPv6 address [1]: " ip6_number
+				until [[ -z "$ip6_number" || "$ip6_number" =~ ^[0-9]+$ && "$ip6_number" -le "$number_of_ip6" ]]; do
+					echo "$ip6_number: invalid selection."
+					read -p "IPv6 address [1]: " ip6_number
+				done
+			fi
+
+			[[ -z "$ip6_number" ]] && ip6_number="1"
+			ip6=$(ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}' | sed -n "$ip6_number"p)
+		fi
+	fi
+
+	if [[ $interactive -eq 1 && -z "$protocol" ]]; then
 		echo
-		echo "This server is behind NAT. What is the public IPv4 address or hostname?"
-		# Get public IP and sanitize with grep
-		get_public_ip=$(grep -m 1 -oE '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' <<< "$(wget -T 10 -t 1 -4qO- "http://ip1.dynupdate.no-ip.com/" || curl -m 10 -4Ls "http://ip1.dynupdate.no-ip.com/")")
-		read -p "Public IPv4 address / hostname [$get_public_ip]: " public_ip
-		# If the checkip service is unavailable and user didn't provide input, ask again
-		until [[ -n "$get_public_ip" || -n "$public_ip" ]]; do
-			echo "Invalid input."
-			read -p "Public IPv4 address / hostname: " public_ip
-		done
-		[[ -z "$public_ip" ]] && public_ip="$get_public_ip"
-	fi
-	# If system has a single IPv6, it is selected automatically
-	if [[ $(ip -6 addr | grep -c 'inet6 [23]') -eq 1 ]]; then
-		ip6=$(ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}')
-	fi
-	# If system has multiple IPv6, ask the user to select one
-	if [[ $(ip -6 addr | grep -c 'inet6 [23]') -gt 1 ]]; then
-		number_of_ip6=$(ip -6 addr | grep -c 'inet6 [23]')
-		echo
-		echo "Which IPv6 address should be used?"
-		ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}' | nl -s ') '
-		read -p "IPv6 address [1]: " ip6_number
-		until [[ -z "$ip6_number" || "$ip6_number" =~ ^[0-9]+$ && "$ip6_number" -le "$number_of_ip6" ]]; do
-			echo "$ip6_number: invalid selection."
-			read -p "IPv6 address [1]: " ip6_number
-		done
-		[[ -z "$ip6_number" ]] && ip6_number="1"
-		ip6=$(ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}' | sed -n "$ip6_number"p)
-	fi
-	echo
-	echo "Which protocol should OpenVPN use?"
-	echo "   1) UDP (recommended)"
-	echo "   2) TCP"
-	read -p "Protocol [1]: " protocol
-	until [[ -z "$protocol" || "$protocol" =~ ^[12]$ ]]; do
-		echo "$protocol: invalid selection."
+		echo "Which protocol should OpenVPN use?"
+		echo "   1) UDP (recommended)"
+		echo "   2) TCP"
 		read -p "Protocol [1]: " protocol
-	done
-	case "$protocol" in
-		1|"") 
-		protocol=udp
-		;;
-		2) 
-		protocol=tcp
-		;;
-	esac
-	echo
-	echo "What port should OpenVPN listen on?"
-	read -p "Port [1194]: " port
-	until [[ -z "$port" || "$port" =~ ^[0-9]+$ && "$port" -le 65535 ]]; do
-		echo "$port: invalid port."
-		read -p "Port [1194]: " port
-	done
-	[[ -z "$port" ]] && port="1194"
-	echo
-	echo "Select a DNS server for the clients:"
-	echo "   1) Default system resolvers"
-	echo "   2) Google"
-	echo "   3) 1.1.1.1"
-	echo "   4) OpenDNS"
-	echo "   5) Quad9"
-	echo "   6) Gcore"
-	echo "   7) AdGuard"
-	echo "   8) Specify custom resolvers"
-	read -p "DNS server [1]: " dns
-	until [[ -z "$dns" || "$dns" =~ ^[1-8]$ ]]; do
-		echo "$dns: invalid selection."
-		read -p "DNS server [1]: " dns
-	done
-	# If the user selected custom resolvers, we deal with that here
-	if [[ "$dns" = "8" ]]; then
+		until [[ -z "$protocol" || "$protocol" =~ ^[12]$ ]]; do
+			echo "$protocol: invalid selection."
+			read -p "Protocol [1]: " protocol
+		done
+		case "$protocol" in
+			1|"") 
+			protocol=udp
+			;;
+			2) 
+			protocol=tcp
+			;;
+		esac
+	fi
+	[[ -z "$protocol" ]] && protocol=udp
+
+	if [[ $interactive -eq 1 && -z "$port" ]]; then
 		echo
+		echo "What port should OpenVPN listen on?"
+		read -p "Port [1194]: " port
+		until [[ -z "$port" || "$port" =~ ^[0-9]+$ && "$port" -le 65535 ]]; do
+			echo "$port: invalid port."
+			read -p "Port [1194]: " port
+		done
+	fi
+	[[ -z "$port" ]] && port="1194"
+
+  if [[ -n $custom_dns ]]; then
+    dns=8
+  fi
+
+	if [[ $interactive -eq 1 && -z "$dns" ]]; then
+		echo
+		echo "Select a DNS server for the clients:"
+		echo "   1) Default system resolvers"
+		echo "   2) Google"
+		echo "   3) Cloudflare"
+		echo "   4) OpenDNS"
+		echo "   5) Quad9"
+		echo "   6) Gcore"
+		echo "   7) AdGuard"
+		echo "   8) Specify custom resolvers"
+		read -p "DNS server [1]: " dns
+		until [[ -z "$dns" || "$dns" =~ ^[1-8]$ ]]; do
+			echo "$dns: invalid selection."
+			read -p "DNS server [1]: " dns
+		done
+	fi
+	[[ -z "$dns" ]] && dns="1"
+
+	# If the user selected custom resolvers, we deal with that here
+	if [[ "$dns" = "8" && -z "$custom_dns" ]]; then
+		echo
+		if [[ $interactive -eq 0 ]]; then
+			echo "Custom DNS list not set"
+			exit
+		fi
+
 		until [[ -n "$custom_dns" ]]; do
 			echo "Enter DNS servers (one or more IPv4 addresses, separated by commas or spaces):"
 			read -p "DNS servers: " dns_input
@@ -205,11 +360,29 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 		done
 	fi
 	echo
-	echo "Enter a name for the first client:"
-	read -p "Name [client]: " unsanitized_client
+
+	if [[ $interactive -eq 1 && -z "$client" ]]; then
+		echo "Enter a name for the first client:"
+		read -p "Name [client]: " unsanitized_client
+	else
+		unsanitized_client="${client:=client}"
+	fi
+
 	# Allow a limited set of characters to avoid conflicts
 	client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
 	[[ -z "$client" ]] && client="client"
+
+  # Log configuration parameters
+  echo "IPv4: $ip
+  Public IP: ${public_ip:-$ip}
+  IPv6: $ip6
+  Protocol: $protocol
+  Port: $port
+  DNS: $dns
+  Custom DNS servers: $custom_dns
+  Client name: $client
+  "
+
 	echo
 	echo "OpenVPN installation is ready to begin."
 	# Install a firewall if firewalld or iptables are not already available
@@ -224,7 +397,11 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 			firewall="iptables"
 		fi
 	fi
-	read -n1 -r -p "Press any key to continue..."
+
+	if [[ $interactive -eq 1 ]]; then
+		read -n1 -r -p "Press any key to continue..."
+	fi
+
 	# If running inside a container, disable LimitNPROC to prevent conflicts
 	if systemd-detect-virt -cq; then
 		mkdir /etc/systemd/system/openvpn-server@server.service.d/ 2>/dev/null
